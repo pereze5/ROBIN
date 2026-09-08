@@ -2260,6 +2260,7 @@ def _create_ray_workflow_runner(
     preprocessing_workers: int = 1,
     bed_workers: int = 1,
     reference: Optional[Path] = None,
+    detect_barcodes: bool = True,
 ) -> Any:
     """Create and configure Ray-based workflow runner (Ray Core)."""
     try:
@@ -2268,13 +2269,19 @@ def _create_ray_workflow_runner(
         from robin import workflow_ray as wrn
 
         class _RayCoreWrapper:
-            def __init__(self, reference: Optional[Path] = None, target_panel: str = None):
+            def __init__(
+                self,
+                reference: Optional[Path] = None,
+                target_panel: str = None,
+                detect_barcodes: bool = True,
+            ):
                 self.manager = type(
                     "_DummyManager", (), {"get_priority_info": lambda _self: {}}
                 )()
                 self.coordinator = None  # Will be set when workflow starts
                 self.reference = reference  # Store reference genome for GUI access
                 self.target_panel = target_panel  # Store target panel for GUI access
+                self.detect_barcodes = detect_barcodes
 
                 # Debug logging for reference genome (only in verbose mode)
                 if self.reference:
@@ -2557,6 +2564,7 @@ def _create_ray_workflow_runner(
                         log_level=log_level_local,
                         preset=preset,
                         workflow_runner=self_ref,
+                        detect_barcodes=self_ref.detect_barcodes,
                         reference=str(reference) if reference else None,
                     )
 
@@ -2570,7 +2578,11 @@ def _create_ray_workflow_runner(
 
                 asyncio.run(_run_with_coordinator())
 
-        return _RayCoreWrapper(reference=reference, target_panel=target_panel)
+        return _RayCoreWrapper(
+            reference=reference,
+            target_panel=target_panel,
+            detect_barcodes=detect_barcodes,
+        )
     except ImportError as e:
         click.echo(
             f"Warning: Ray Core not available ({e}). Falling back to threading-based workflow.",
@@ -2701,6 +2713,7 @@ def _create_workflow_runner(
     bed_workers: int = 1,
     reference: Optional[Path] = None,
     center: str = None,
+    detect_barcodes: bool = True,
 ) -> Any:
     """Create the appropriate workflow runner based on configuration."""
     if analysis_workers < 1:
@@ -2719,6 +2732,7 @@ def _create_workflow_runner(
             target_panel,  # Pass target_panel parameter to Ray workflow runner
             preprocessing_workers=preprocessing_workers,
             bed_workers=bed_workers,
+            detect_barcodes=detect_barcodes,
             reference=reference,  # Pass reference parameter to Ray workflow runner
         )
         if runner is None:
@@ -2734,6 +2748,7 @@ def _create_workflow_runner(
                 bed_workers=bed_workers,
                 reference=reference,
                 center=center,
+                detect_barcodes=detect_barcodes,
             )
         return runner
     else:
@@ -2748,6 +2763,7 @@ def _create_workflow_runner(
             bed_workers=bed_workers,
             reference=reference,
             center=center,
+            detect_barcodes=detect_barcodes,
         )
 
 
@@ -2982,11 +2998,18 @@ def _create_classifier_with_work_dir(
     workflow_steps: List[str],
     target_panel: str,
     itd_config: Optional[dict] = None,
+    *,
+    detect_barcodes: bool = True,
 ):
     """Create a classifier function that includes work directory in job context."""
 
     def classifier_with_work_dir(filepath: str) -> List[Job]:
-        jobs = default_file_classifier(filepath, workflow_steps, target_panel)
+        jobs = default_file_classifier(
+            filepath,
+            workflow_steps,
+            target_panel,
+            detect_barcodes=detect_barcodes,
+        )
         for job in jobs:
             job.context.add_metadata("work_dir", str(work_dir))
             if itd_config:
@@ -3281,6 +3304,12 @@ def _display_workflow_config(
     default=None,
     help="Target gene panel for fusion analysis. Use 'robin add-panel' to add custom panels.",
 )
+@click.option(
+    "--disable-barcode-demultiplexing",
+    is_flag=True,
+    default=False,
+    help="Disable barcode detection and barcode-based sample splitting during BAM preprocessing.",
+)
 def workflow(
     ctx: click.Context,
     path: Optional[Path],
@@ -3312,6 +3341,7 @@ def workflow(
     preset: Optional[str],
     ray_dashboard: bool,
     target_panel: Optional[str],
+    disable_barcode_demultiplexing: bool,
 ) -> None:
     """Run various operations on BAM files in a directory. Preprocessing is automatically included as the first step."""
     try:
@@ -3377,6 +3407,9 @@ def workflow(
         preset = merged["preset"]
         ray_dashboard = merged["ray_dashboard"]
         target_panel = merged["target_panel"]
+
+        # Configure barcode preprocessing behavior
+        detect_barcodes = not disable_barcode_demultiplexing
 
         if reference is not None and not reference.exists():
             raise click.BadParameter(f"Reference genome does not exist: {reference}")
@@ -3565,6 +3598,7 @@ def workflow(
                 reference=reference,  # Add reference parameter for Ray workflow too
                 center=center,
                 target_panel=target_panel,
+                detect_barcodes=detect_barcodes,
             )
 
             # Run Ray Core implementation
@@ -3595,6 +3629,7 @@ def workflow(
                         gui_port=gui_port,
                         with_gui=with_gui,
                         center=center,
+                        detect_barcodes=detect_barcodes,
                         workflow_toml=(
                             str(toml_config.resolve()) if toml_config else None
                         ),
@@ -3652,6 +3687,7 @@ def workflow(
             reference=reference,
             center=center,
             target_panel=target_panel,
+            detect_barcodes=detect_barcodes,
         )
 
         # Handle Ray-specific configuration
@@ -3710,6 +3746,7 @@ def workflow(
                 workflow_steps,
                 target_panel,
                 itd_config=itd_cfg if isinstance(itd_cfg, dict) else None,
+                detect_barcodes=detect_barcodes,
             )
 
         # Display configuration
