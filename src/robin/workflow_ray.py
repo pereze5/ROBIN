@@ -4845,9 +4845,13 @@ class Pool:
 
 
 def default_file_classifier(
-    filepath: str, plan: List[str], target_panel: str
+    filepath: str,
+    plan: List[str],
+    target_panel: str,
+    detect_barcodes: bool = True,
 ) -> List[Job]:
     ctx = WorkflowContext(filepath)
+    ctx.add_metadata("detect_barcodes", detect_barcodes)
     ctx.add_metadata("filename", os.path.basename(filepath))
     ctx.add_metadata("created", time.time())
     ctx.add_metadata("target_panel", target_panel)  # Add panel metadata
@@ -4962,6 +4966,7 @@ async def submit_existing_paths(
     ignore_patterns: Optional[List[str]] = None,
     recursive: bool = True,
     work_dir: Optional[str] = None,
+    detect_barcodes: bool = True,
 ) -> None:
     # Fetch reference and target_panel once before processing files (performance optimization)
     coord_reference = None
@@ -5000,7 +5005,12 @@ async def submit_existing_paths(
             if _matches_any_pattern(pth, patterns) and _matches_no_ignores(
                 pth, ignore_patterns
             ):
-                jobs = default_file_classifier(str(pth), plan, coord_target_panel)
+                jobs = default_file_classifier(
+                    str(pth),
+                    plan,
+                    coord_target_panel,
+                    detect_barcodes=detect_barcodes,
+                )
                 if work_dir:
                     for j in jobs:
                         j.context.add_metadata("work_dir", work_dir)
@@ -5032,7 +5042,12 @@ async def submit_existing_paths(
                     f, ignore_patterns
                 ):
                     continue
-                jobs = default_file_classifier(str(f), plan, coord_target_panel)
+                jobs = default_file_classifier(
+                    str(f),
+                    plan,
+                    coord_target_panel,
+                    detect_barcodes=detect_barcodes,
+                )
                 if work_dir:
                     for j in jobs:
                         j.context.add_metadata("work_dir", work_dir)
@@ -5387,6 +5402,7 @@ class RayFileWatcher(FileSystemEventHandler):
         recursive: bool = True,
         work_dir: Optional[str] = None,
         reference: Optional[str] = None,
+        detect_barcodes: bool = True,
     ):
         self.coord = coord
         self.plan = plan
@@ -5406,6 +5422,7 @@ class RayFileWatcher(FileSystemEventHandler):
         # If a pass BAM is present, we want fail-BAM errors to remain visible.
         self._watch_seen_bam: bool = False
         self._watch_seen_pass_bam: bool = False
+        self.detect_barcodes = detect_barcodes
 
     def _annotate_jobs(self, jobs: List[Job]) -> None:
         """Attach shared workflow metadata (work_dir, reference, target_panel)."""
@@ -5460,7 +5477,12 @@ class RayFileWatcher(FileSystemEventHandler):
                     self._watch_seen_pass_bam = True
         except Exception:
             pass
-        jobs = default_file_classifier(fp, self.plan, self.target_panel)
+        jobs = default_file_classifier(
+            fp,
+            self.plan,
+            self.target_panel,
+            detect_barcodes=self.detect_barcodes,
+        )
         self._annotate_jobs(jobs)
         if self.work_dir:
             try:
@@ -5794,6 +5816,7 @@ def add_watch_path(new_path: str) -> Tuple[bool, str]:
     patterns = ctx.get("patterns") or ["*.bam"]
     ignore_patterns = ctx.get("ignore_patterns") or []
     recursive = ctx.get("recursive", True)
+    detect_barcodes = ctx.get("detect_barcodes", True)
 
     # Option B behavior:
     # When a user adds a folder that contains a mix of previously-analysed and new samples,
@@ -5860,6 +5883,7 @@ def add_watch_path(new_path: str) -> Tuple[bool, str]:
                     ignore_patterns=ignore_patterns,
                     recursive=recursive,
                     work_dir=work_dir,
+                    detect_barcodes=detect_barcodes,
                 )
             )
         except Exception as e:
@@ -5955,6 +5979,7 @@ async def run(
     enable_batching: bool = True,
     with_gui: bool = True,
     workflow_toml: Optional[str] = None,
+    detect_barcodes: bool = True,
 ):
     global GLOBAL_LOG_LEVEL, _GLOBAL_OBSERVER, _GLOBAL_WATCHER, _GLOBAL_WATCH_CONTEXT, _GLOBAL_WATCHED_PATHS
     GLOBAL_LOG_LEVEL = (log_level or "INFO").upper()
@@ -6334,6 +6359,7 @@ async def run(
             ignore_patterns=ignore_patterns,
             recursive=recursive,
             work_dir=work_dir,
+            detect_barcodes=detect_barcodes,
         )
 
     observer = None
@@ -6349,6 +6375,7 @@ async def run(
             recursive=recursive,
             work_dir=work_dir,
             reference=str(reference) if reference else None,
+            detect_barcodes=detect_barcodes,
         )
         for p in paths:
             if Path(p).is_dir():
@@ -6367,6 +6394,7 @@ async def run(
             "recursive": recursive,
             "reference": str(reference) if reference else None,
             "target_panel": target_panel,
+            "detect_barcodes": detect_barcodes,
         }
 
     try:
