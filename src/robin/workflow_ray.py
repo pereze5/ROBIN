@@ -54,9 +54,11 @@ import itertools
 from contextlib import nullcontext
 
 import ray
+import subprocess
 from tqdm import tqdm
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 try:
     from rich.progress import (
@@ -830,6 +832,56 @@ class SampleJobBatcher:
 
 # ---------- Utilities ----------
 _job_id_counter = itertools.count(1000)
+
+
+_NETWORK_FILESYSTEMS = {
+    "cifs",
+    "smbfs",
+    "nfs",
+    "nfs4",
+    "sshfs",
+    "fuse.sshfs",
+}
+
+
+def _filesystem_type(path: str) -> Optional[str]:
+    """Return the filesystem type containing path, or None if detection fails."""
+    try:
+        resolved = str(Path(path).resolve())
+        result = subprocess.run(
+            ["findmnt", "-T", resolved, "-n", "-o", "FSTYPE"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0:
+            fs_type = result.stdout.strip().lower()
+            return fs_type or None
+    except Exception:
+        pass
+
+    return None
+
+
+def _should_use_polling(paths: List[str], watch_mode: str) -> bool:
+    """Select polling vs native filesystem watching."""
+    if watch_mode == "polling":
+        return True
+
+    if watch_mode == "native":
+        return False
+
+    # auto: poll if any watched directory is on a network filesystem
+    for path in paths:
+        if not Path(path).is_dir():
+            continue
+
+        fs_type = _filesystem_type(path)
+        if fs_type in _NETWORK_FILESYSTEMS:
+            return True
+
+    return False
 
 
 def job_queue_of(job_type: str) -> str:
@@ -5980,9 +6032,16 @@ async def run(
     with_gui: bool = True,
     workflow_toml: Optional[str] = None,
     detect_barcodes: bool = True,
+    watch_mode: str = "auto",
 ):
     global GLOBAL_LOG_LEVEL, _GLOBAL_OBSERVER, _GLOBAL_WATCHER, _GLOBAL_WATCH_CONTEXT, _GLOBAL_WATCHED_PATHS
     GLOBAL_LOG_LEVEL = (log_level or "INFO").upper()
+
+    if watch_mode not in {"auto", "native", "polling"}:
+        raise ValueError(
+            f"Invalid watch_mode {watch_mode!r}; "
+            "expected 'auto', 'native', or 'polling'"
+        )
 
     # Configure Ray logging to reduce verbose output
     import logging
@@ -6361,11 +6420,19 @@ async def run(
             work_dir=work_dir,
             detect_barcodes=detect_barcodes,
         )
-
+        
     observer = None
     watcher = None
     if watch and paths:
-        observer = Observer()
+        use_polling = _should_use_polling(paths, watch_mode)
+
+        if use_polling:
+            observer = PollingObserver(timeout=10.0)
+            print("File watcher: polling mode")
+        else:
+            observer = Observer()
+            print("File watcher: native mode")
+
         watcher = RayFileWatcher(
             coord,
             plan,
@@ -6395,6 +6462,7 @@ async def run(
             "reference": str(reference) if reference else None,
             "target_panel": target_panel,
             "detect_barcodes": detect_barcodes,
+            "watch_mode": watch_mode,
         }
 
     try:
