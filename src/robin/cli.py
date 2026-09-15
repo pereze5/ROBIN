@@ -2261,6 +2261,7 @@ def _create_ray_workflow_runner(
     bed_workers: int = 1,
     reference: Optional[Path] = None,
     detect_barcodes: bool = True,
+    watch_mode: str = "auto",
 ) -> Any:
     """Create and configure Ray-based workflow runner (Ray Core)."""
     try:
@@ -2274,6 +2275,7 @@ def _create_ray_workflow_runner(
                 reference: Optional[Path] = None,
                 target_panel: str = None,
                 detect_barcodes: bool = True,
+                watch_mode: str = "auto",
             ):
                 self.manager = type(
                     "_DummyManager", (), {"get_priority_info": lambda _self: {}}
@@ -2282,6 +2284,7 @@ def _create_ray_workflow_runner(
                 self.reference = reference  # Store reference genome for GUI access
                 self.target_panel = target_panel  # Store target panel for GUI access
                 self.detect_barcodes = detect_barcodes
+                self.watch_mode = watch_mode
 
                 # Debug logging for reference genome (only in verbose mode)
                 if self.reference:
@@ -2565,6 +2568,7 @@ def _create_ray_workflow_runner(
                         preset=preset,
                         workflow_runner=self_ref,
                         detect_barcodes=self_ref.detect_barcodes,
+                        watch_mode=self_ref.watch_mode,
                         reference=str(reference) if reference else None,
                     )
 
@@ -2582,6 +2586,7 @@ def _create_ray_workflow_runner(
             reference=reference,
             target_panel=target_panel,
             detect_barcodes=detect_barcodes,
+            watch_mode=watch_mode,
         )
     except ImportError as e:
         click.echo(
@@ -2714,6 +2719,7 @@ def _create_workflow_runner(
     reference: Optional[Path] = None,
     center: str = None,
     detect_barcodes: bool = True,
+    watch_mode: str = "auto",
 ) -> Any:
     """Create the appropriate workflow runner based on configuration."""
     if analysis_workers < 1:
@@ -2733,6 +2739,7 @@ def _create_workflow_runner(
             preprocessing_workers=preprocessing_workers,
             bed_workers=bed_workers,
             detect_barcodes=detect_barcodes,
+            watch_mode=watch_mode,
             reference=reference,  # Pass reference parameter to Ray workflow runner
         )
         if runner is None:
@@ -3271,6 +3278,17 @@ def _display_workflow_config(
     help="Do not watch directories for new files (default: watch enabled).",
 )
 @click.option(
+    "--watch-mode",
+    type=click.Choice(["auto", "native", "polling"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help=(
+        "Filesystem watch mode: 'auto' uses polling for network filesystems "
+        "such as CIFS/NFS and native filesystem events otherwise; "
+        "'native' forces filesystem events; 'polling' forces directory polling."
+    ),
+)
+@click.option(
     "--with-gui/--no-gui",
     default=True,
     help="Launch NiceGUI workflow monitor (default: on). Disable with --no-gui.",
@@ -3338,6 +3356,7 @@ def workflow(
     gui_host: str,
     gui_port: int,
     no_watch: bool,
+    watch_mode: str,
     preset: Optional[str],
     ray_dashboard: bool,
     target_panel: Optional[str],
@@ -3374,6 +3393,7 @@ def workflow(
                 "gui_host": gui_host,
                 "gui_port": gui_port,
                 "no_watch": no_watch,
+                "watch_mode": watch_mode,
                 "preset": preset,
                 "ray_dashboard": ray_dashboard,
                 "target_panel": target_panel,
@@ -3404,6 +3424,7 @@ def workflow(
         gui_host = merged["gui_host"]
         gui_port = merged["gui_port"]
         no_watch = merged["no_watch"]
+        watch_mode = merged["watch_mode"]
         preset = merged["preset"]
         ray_dashboard = merged["ray_dashboard"]
         target_panel = merged["target_panel"]
@@ -3599,6 +3620,7 @@ def workflow(
                 center=center,
                 target_panel=target_panel,
                 detect_barcodes=detect_barcodes,
+                watch_mode=watch_mode,
             )
 
             # Run Ray Core implementation
@@ -3617,6 +3639,7 @@ def workflow(
                         process_existing=not no_process_existing,
                         monitor=not no_progress,
                         watch=(not no_watch),
+                        watch_mode=watch_mode,
                         patterns=["*.bam"],
                         ignore_patterns=None,
                         recursive=True,
@@ -3688,6 +3711,7 @@ def workflow(
             center=center,
             target_panel=target_panel,
             detect_barcodes=detect_barcodes,
+            watch_mode=watch_mode,
         )
 
         # Handle Ray-specific configuration
